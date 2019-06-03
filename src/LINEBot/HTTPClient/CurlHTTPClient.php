@@ -81,7 +81,27 @@ class CurlHTTPClient implements HTTPClient
     public function post($url, array $data, array $headers = null)
     {
         $headers = is_null($headers) ? ['Content-Type: application/json; charset=utf-8'] : $headers;
-        return $this->sendRequest('POST', $url, $headers, $data);
+        $options = [];
+        if (is_null($data)) {
+            // Rel: https://github.com/line/line-bot-sdk-php/issues/35
+            $options[CURLOPT_HTTPHEADER][] = 'Content-Length: 0';
+        } else {
+            if (isset($data['__file']) && isset($data['__type'])) {
+                $options[CURLOPT_PUT] = true;
+                $options[CURLOPT_INFILE] = fopen($data['__file'], 'r');
+                $options[CURLOPT_INFILESIZE] = filesize($data['__file']);
+            } elseif (in_array('Content-Type: application/x-www-form-urlencoded', $headers)) {
+                $options[CURLOPT_POST] = true;
+                $options[CURLOPT_POSTFIELDS] = http_build_query($data);
+            } elseif (!empty($data)) {
+                $options[CURLOPT_POST] = true;
+                $options[CURLOPT_POSTFIELDS] = json_encode($data);
+            } else {
+                $options[CURLOPT_POST] = true;
+                $options[CURLOPT_POSTFIELDS] = $data;
+            }
+        }
+        return $this->sendRequest('POST', $url, $headers, $options);
     }
 
     /**
@@ -98,58 +118,25 @@ class CurlHTTPClient implements HTTPClient
 
     /**
      * @param string $method
-     * @param array $headers
-     * @param string|null $reqBody
-     * @return array cUrl options
-     */
-    private function getOptions($method, $headers, $reqBody)
-    {
-        $options = [
-            CURLOPT_CUSTOMREQUEST => $method,
-            CURLOPT_HTTPHEADER => $headers,
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_BINARYTRANSFER => true,
-            CURLOPT_HEADER => true,
-        ];
-        if ($method === 'POST') {
-            if (is_null($reqBody)) {
-                // Rel: https://github.com/line/line-bot-sdk-php/issues/35
-                $options[CURLOPT_HTTPHEADER][] = 'Content-Length: 0';
-            } else {
-                if (isset($reqBody['__file']) && isset($reqBody['__type'])) {
-                    $options[CURLOPT_PUT] = true;
-                    $options[CURLOPT_INFILE] = fopen($reqBody['__file'], 'r');
-                    $options[CURLOPT_INFILESIZE] = filesize($reqBody['__file']);
-                } elseif (in_array('Content-Type: application/x-www-form-urlencoded', $headers)) {
-                    $options[CURLOPT_POST] = true;
-                    $options[CURLOPT_POSTFIELDS] = http_build_query($reqBody);
-                } elseif (!empty($reqBody)) {
-                    $options[CURLOPT_POST] = true;
-                    $options[CURLOPT_POSTFIELDS] = json_encode($reqBody);
-                } else {
-                    $options[CURLOPT_POST] = true;
-                    $options[CURLOPT_POSTFIELDS] = $reqBody;
-                }
-            }
-        }
-        return $options;
-    }
-
-    /**
-     * @param string $method
      * @param string $url
      * @param array $additionalHeader
      * @param string|null $reqBody
      * @return Response
      * @throws CurlExecutionException
      */
-    private function sendRequest($method, $url, array $additionalHeader, $reqBody = null)
+    private function sendRequest($method, $url, array $additionalHeader, $options = [])
     {
         $curl = new Curl($url);
 
         $headers = array_merge($this->authHeaders, $this->userAgentHeader, $additionalHeader);
 
-        $options = $this->getOptions($method, $headers, $reqBody);
+        $options = [
+            CURLOPT_CUSTOMREQUEST => $method,
+            CURLOPT_HTTPHEADER => $headers,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_BINARYTRANSFER => true,
+            CURLOPT_HEADER => true,
+        ] + $options;
         $curl->setoptArray($options);
 
         $result = $curl->exec();
